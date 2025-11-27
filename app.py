@@ -9,7 +9,7 @@ st.set_page_config(
 st.title("Streamlit App Template")
 st.write(
     "Welcome! This is a minimal multi-page Streamlit app template. "
-    "Use the navigation in the sidebar to switch between pages."
+    "Use the navigation in the sidebar to switch between pages. hihihi"
 )
 
 st.markdown(
