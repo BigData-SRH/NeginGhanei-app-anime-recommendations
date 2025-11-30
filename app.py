@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import ast
 import requests
+import json
+import os
 from urllib.parse import quote
 import random
 
@@ -51,6 +53,32 @@ def load_anime_data():
     df['genres_detailed'] = df['genres_detailed'].apply(safe_literal_eval)
     df = df.dropna(subset=['title', 'anime_id']).reset_index(drop=True)
     return df
+
+# --- Load precomputed user recommendations from JSON ---
+@st.cache_data
+def load_user_recommendations():
+    recs_path = r"D:\SRH\big data\cleaned_output\user_recs_top100.json"
+    if os.path.exists(recs_path):
+        with open(recs_path, 'r', encoding='utf-8') as f:
+            raw_recs = json.load(f)
+        cleaned_recs = {}
+        for k, v in raw_recs.items():
+            try:
+                key = str(int(float(k)))  # Normalize key to string of int
+                rec_ids = []
+                for x in v:
+                    try:
+                        rec_ids.append(int(x))
+                    except (ValueError, TypeError):
+                        continue
+                if rec_ids:
+                    cleaned_recs[key] = rec_ids
+            except (ValueError, TypeError):
+                continue  # Skip invalid keys
+        return cleaned_recs
+    else:
+        st.warning("⚠️ Precomputed recommendations not found. Using random fallback.")
+        return {}
 
 # --- Page config ---
 st.set_page_config(page_title="Anime Recommender", layout="wide")
@@ -250,6 +278,9 @@ div[data-testid="stExpander"] div[data-testid="stExpanderContent"] {
 anime_df = load_anime_data()
 anime_titles = anime_df['title'].tolist()
 
+# --- Load precomputed recommendations ---
+user_based_recs_json = load_user_recommendations()
+
 # --- Extract all genres ---
 all_genres = set()
 for genres_list in anime_df['genres']:
@@ -277,11 +308,42 @@ def format_genres_as_tags(genres_list):
         tags.append(f'<span class="genre-tag">{g_clean}</span>')
     return " ".join(tags) if tags else "N/A"
 
-# --- Recommendation logic ---
+# --- REAL USER-BASED RECOMMENDATIONS FROM JSON ---
 def get_user_based_recs(current_anime_id, df, n=100):
-    candidates = df[df['anime_id'] != current_anime_id]
-    return candidates.sample(n=min(n, len(candidates)), random_state=42).reset_index(drop=True)
+    """
+    Get co-occurrence recommendations from precomputed JSON.
+    Fallback to random if not found.
+    """
+    key = str(int(current_anime_id))
+    
+    if key in user_based_recs_json:
+        rec_ids = user_based_recs_json[key][:n]
+    else:
+        candidates = df[df['anime_id'] != current_anime_id]
+        if candidates.empty:
+            return pd.DataFrame()
+        return candidates.sample(n=min(n, len(candidates)), random_state=42).reset_index(drop=True)
+    
+    # Keep order from JSON
+    rec_df = df[df['anime_id'].isin(rec_ids)].copy()
+    rec_df['sort_key'] = pd.Categorical(
+        rec_df['anime_id'],
+        categories=rec_ids,
+        ordered=True
+    )
+    rec_df = rec_df.sort_values('sort_key').drop('sort_key', axis=1).reset_index(drop=True)
+    
+    # Pad if needed
+    if len(rec_df) < n:
+        missing = n - len(rec_df)
+        pool = df[~df['anime_id'].isin(rec_ids) & (df['anime_id'] != current_anime_id)]
+        if not pool.empty:
+            pad = pool.sample(n=min(missing, len(pool)), random_state=42)
+            rec_df = pd.concat([rec_df, pad], ignore_index=True)
+    
+    return rec_df.head(n).reset_index(drop=True)
 
+# --- Genre-based recs (unchanged) ---
 def get_genre_based_recs(selected_genres, df, current_anime_id, n=100):
     selected_genres = set(selected_genres)
     if not selected_genres:
@@ -301,6 +363,7 @@ def get_genre_based_recs(selected_genres, df, current_anime_id, n=100):
     if candidates.empty: candidates = df[df['anime_id'] != current_anime_id]
     return candidates.head(n).reset_index(drop=True)[[col for col in df.columns if col != 'overlap']]
 
+# --- Hybrid recs (unchanged) ---
 def combine_hybrid_recs(user_recs, genre_recs, weight_user=0.5, total=100):
     hybrid_list = []
     user_list = user_recs.to_dict('records')
@@ -326,7 +389,7 @@ def combine_hybrid_recs(user_recs, genre_recs, weight_user=0.5, total=100):
             seen.add(item['anime_id'])
     return pd.DataFrame(hybrid_list[:total])
 
-# --- Slideshow with MAL links ---
+# --- Slideshow component ---
 def show_multi_slideshow(recs, slide_key, title):
     if recs.empty:
         st.write("No recommendations.")
@@ -386,7 +449,7 @@ def show_multi_slideshow(recs, slide_key, title):
             st.session_state[slide_key] = min(total_slides - 1, current_slide + 1)
             st.rerun()
 
-# --- Initialize session state ---
+# --- Session state ---
 for key in ["user_slide", "genre_slide", "hybrid_slide"]:
     if key not in st.session_state:
         st.session_state[key] = 0
@@ -419,7 +482,6 @@ else:
     img_url = jikan_img or selected_row['image_url'] or "https://via.placeholder.com/200x280?text=No+Image"
     mal_url = selected_row.get('mal_url', '#')
 
-    # ✅ FIXED: Main anime card is now properly styled and NOT wrapped in <a>
     st.markdown('<div class="center-container">', unsafe_allow_html=True)
     st.html(f"""
     <div class="selected-anime-card">
@@ -438,17 +500,17 @@ else:
 
     st.markdown("---")
 
-    # Generate base recommendations
+    # Generate recommendations
     user_recs = get_user_based_recs(current_anime_id, filtered_df, n=100)
     genre_recs = get_genre_based_recs(selected_row['genres'], filtered_df, current_anime_id, n=100)
 
-    # Display user & genre recs
-    show_multi_slideshow(user_recs, "user_slide", "User-based Recommendations (Placeholder)")
+    # Display
+    show_multi_slideshow(user_recs, "user_slide", "Co-occurrence Recommendations (Real)")
     st.markdown("---")
     show_multi_slideshow(genre_recs, "genre_slide", "Genre-based Recommendations (Genres + Detailed)")
     st.markdown("---")
 
-    # ✅ MOVED HERE: Hybrid control right before hybrid recs
+    # Hybrid
     st.subheader("🎛️ Hybrid Recommendation Balance")
     user_weight = st.slider(
         "User-based vs Genre-based",
