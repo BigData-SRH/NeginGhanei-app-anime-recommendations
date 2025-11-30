@@ -3,6 +3,7 @@ import pandas as pd
 import ast
 import requests
 from urllib.parse import quote
+import random
 
 # --- Config ---
 ITEMS_PER_SLIDE = 5
@@ -25,17 +26,43 @@ def fetch_anime_description(title):
     except Exception as e:
         return f"Error fetching description: {str(e)}", ""
 
+# --- Load and preprocess dataset ---
+@st.cache_data
+def load_anime_data():
+    df = pd.read_csv(r"D:\SRH\big data\cleaned_output\cleaned_anime_metadata_filtered.csv")
+
+    required_cols = ['title', 'genres', 'score', 'image_url', 'anime_id', 'genres_detailed',
+                     'type', 'year', 'episodes', 'mal_url', 'sequel']
+    for col in required_cols:
+        if col not in df.columns:
+            st.error(f"❌ Missing required column: {col}")
+            st.stop()
+
+    def safe_literal_eval(x):
+        if pd.isna(x) or x.strip() == "" or x == "[]":
+            return []
+        try:
+            parsed = ast.literal_eval(x)
+            return parsed if isinstance(parsed, list) else []
+        except:
+            return []
+
+    df['genres'] = df['genres'].apply(safe_literal_eval)
+    df['genres_detailed'] = df['genres_detailed'].apply(safe_literal_eval)
+    df = df.dropna(subset=['title', 'anime_id']).reset_index(drop=True)
+    return df
+
 # --- Page config ---
 st.set_page_config(page_title="Anime Recommender", layout="wide")
 
-# --- Global CSS (with card numbering) ---
+# --- Global CSS ---
 st.markdown("""
 <style>
 .stApp {
     background-color: #0D0D0D;
     color: #FFFFFF;
 }
-.stSelectbox label, .stMultiSelect label {
+.stSelectbox label, .stMultiSelect label, .stSlider label {
     color: #CCCCCC !important;
     font-weight: 500;
 }
@@ -48,25 +75,16 @@ h2, h3 {
     font-weight: bold;
     margin: 5px;
 }
-
-/* ✅ ROBUST EXPANDER STYLING */
-div[data-testid="stExpander"] details summary,
-div[data-testid="stExpander"] details[open] summary {
+div[data-testid="stExpander"] details summary {
     color: #FFDD57 !important;
     font-weight: 600 !important;
     font-size: 16px !important;
-}
-div[data-testid="stExpander"] details summary:hover,
-div[data-testid="stExpander"] details summary:focus,
-div[data-testid="stExpander"] details summary:active {
-    color: #FFD700 !important;
 }
 div[data-testid="stExpander"] div[data-testid="stExpanderContent"] {
     background-color: #1A1A1A !important;
     border-radius: 10px !important;
     padding: 15px !important;
 }
-
 .genre-tag {
     display: inline-block;
     background-color: #444444;
@@ -86,14 +104,18 @@ div[data-testid="stExpander"] div[data-testid="stExpanderContent"] {
     flex-direction: column;
     align-items: center;
     justify-content: flex-start;
-    height: 370px;
+    height: 420px;
     width: 160px;
     flex-shrink: 0;
     box-shadow: 0 2px 6px rgba(0,0,0,0.3);
     overflow-y: auto;
     position: relative;
+    transition: transform 0.2s;
 }
-/* ✅ CARD NUMBER BADGE */
+.anime-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 4px 10px rgba(255,215,0,0.3);
+}
 .card-number {
     position: absolute;
     top: 8px;
@@ -112,27 +134,55 @@ div[data-testid="stExpander"] div[data-testid="stExpanderContent"] {
 }
 .anime-card img {
     width: 100%;
-    height: 220px;
+    height: 200px;
     object-fit: cover;
     border-radius: 8px;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
 }
 .anime-card h4 {
     color: #FFD700;
     font-size: 12px;
     font-weight: bold;
-    margin: 0 0 6px;
+    margin: 0 0 4px;
     line-height: 1.3;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
 }
+.anime-card .meta-info {
+    font-size: 10px;
+    color: #AAAAAA;
+    margin: 2px 0;
+    line-height: 1.3;
+}
 .anime-card .score {
     color: #FF8C00;
     font-size: 11px;
     font-weight: bold;
     margin: 4px 0;
+}
+.anime-card a {
+    text-decoration: none;
+    color: inherit;
+    width: 100%;
+    height: 100%;
+}
+.center-container {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+    margin: 20px 0;
+}
+.slide-container {
+    display: flex;
+    flex-direction: row;
+    gap: 12px;
+    justify-content: flex-start;
+    padding: 10px 0;
+    margin: 10px 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
 }
 .selected-anime-card {
     display: flex;
@@ -177,95 +227,106 @@ div[data-testid="stExpander"] div[data-testid="stExpanderContent"] {
     font-size: 16px;
     margin: 10px 0 5px;
 }
-.center-container {
-    display: flex;
-    justify-content: center;
-    width: 100%;
-    margin: 20px 0;
+.meta-info-main {
+    font-size: 12px;
+    color: #AAAAAA;
+    margin: 5px 0;
 }
-.slide-container {
-    display: flex;
-    flex-direction: row;
-    gap: 12px;
-    justify-content: flex-start;
-    padding: 10px 0;
-    margin: 10px 0;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
+.mal-button {
+    background-color: #FFD700;
+    color: #0D0D0D;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-weight: bold;
+    text-decoration: none;
+    display: inline-block;
+    margin-top: 10px;
 }
 </style>
 """, unsafe_allow_html=True)
 
-# --- Load dataset ---
-try:
-    anime_df = pd.read_csv("d:/SRH/big data/data folder/anime/animes.csv")
-except FileNotFoundError:
-    st.error("❌ Anime dataset not found! Check the file path.")
-    st.stop()
-
-required_cols = ['title', 'genres', 'score', 'image_url']
-for col in required_cols:
-    if col not in anime_df.columns:
-        st.error(f"❌ Missing column: `{col}`")
-        st.stop()
-
-def safe_literal_eval(x):
-    if pd.isna(x) or x.strip() == "" or x == "[]":
-        return []
-    try:
-        parsed = ast.literal_eval(x)
-        return parsed if isinstance(parsed, list) else []
-    except:
-        return []
-
-anime_df['genres'] = anime_df['genres'].apply(safe_literal_eval)
-anime_df = anime_df.dropna(subset=['title']).reset_index(drop=True)
+# --- Load data ---
+anime_df = load_anime_data()
 anime_titles = anime_df['title'].tolist()
 
+# --- Extract all genres ---
 all_genres = set()
 for genres_list in anime_df['genres']:
     if isinstance(genres_list, list):
         all_genres.update(g for g in genres_list if isinstance(g, str))
 all_genres = sorted(all_genres)
 
-for key in ["user_recs_full", "genre_recs_full", "hybrid_recs_full"]:
-    if key not in st.session_state:
-        if key == "user_recs_full":
-            st.session_state[key] = anime_df.sample(frac=1, random_state=42).reset_index(drop=True)
-        elif key == "genre_recs_full":
-            st.session_state[key] = anime_df.sample(frac=1, random_state=100).reset_index(drop=True)
-        else:
-            st.session_state[key] = anime_df.sample(frac=1, random_state=200).reset_index(drop=True)
-
-for key in ["user_slide", "genre_slide", "hybrid_slide"]:
-    if key not in st.session_state:
-        st.session_state[key] = 0
-
+# --- Helper: Apply genre filter ---
 def apply_genre_filter(df, include_genres, exclude_genres):
     if not include_genres and not exclude_genres:
         return df
-
     def matches(row):
         row_genres = set(row['genres']) if isinstance(row['genres'], list) else set()
-        if include_genres:
-            if not row_genres & set(include_genres):
-                return False
-        if exclude_genres:
-            if row_genres & set(exclude_genres):
-                return False
+        if include_genres and not (row_genres & set(include_genres)): return False
+        if exclude_genres and (row_genres & set(exclude_genres)): return False
         return True
-
     return df[df.apply(matches, axis=1)].reset_index(drop=True)
 
+# --- Helper: Format genres as tags ---
 def format_genres_as_tags(genres_list):
-    if not isinstance(genres_list, list):
-        return "N/A"
+    if not isinstance(genres_list, list): return "N/A"
     tags = []
-    for g in genres_list[:6]:
+    for g in genres_list[:5]:
         g_clean = str(g).strip()
         tags.append(f'<span class="genre-tag">{g_clean}</span>')
     return " ".join(tags) if tags else "N/A"
 
+# --- Recommendation logic ---
+def get_user_based_recs(current_anime_id, df, n=100):
+    candidates = df[df['anime_id'] != current_anime_id]
+    return candidates.sample(n=min(n, len(candidates)), random_state=42).reset_index(drop=True)
+
+def get_genre_based_recs(selected_genres, df, current_anime_id, n=100):
+    selected_genres = set(selected_genres)
+    if not selected_genres:
+        candidates = df[df['anime_id'] != current_anime_id]
+        return candidates.sample(n=min(n, len(candidates)), random_state=100).reset_index(drop=True)
+
+    def genre_overlap(row):
+        if row['anime_id'] == current_anime_id: return -1
+        row_genres = set()
+        if isinstance(row.get('genres'), list): row_genres.update(row['genres'])
+        if isinstance(row.get('genres_detailed'), list): row_genres.update(row['genres_detailed'])
+        return len(selected_genres & row_genres)
+
+    df = df.copy()
+    df['overlap'] = df.apply(genre_overlap, axis=1)
+    candidates = df[df['overlap'] > 0].sort_values('overlap', ascending=False)
+    if candidates.empty: candidates = df[df['anime_id'] != current_anime_id]
+    return candidates.head(n).reset_index(drop=True)[[col for col in df.columns if col != 'overlap']]
+
+def combine_hybrid_recs(user_recs, genre_recs, weight_user=0.5, total=100):
+    hybrid_list = []
+    user_list = user_recs.to_dict('records')
+    genre_list = genre_recs.to_dict('records')
+    seen = set()
+    i = j = 0
+    while len(hybrid_list) < total and (i < len(user_list) or j < len(genre_list)):
+        if random.random() < weight_user and i < len(user_list):
+            item = user_list[i]; i += 1
+        elif j < len(genre_list):
+            item = genre_list[j]; j += 1
+        else:
+            break
+        if item['anime_id'] not in seen:
+            hybrid_list.append(item)
+            seen.add(item['anime_id'])
+    pool = user_list + genre_list
+    random.shuffle(pool)
+    for item in pool:
+        if len(hybrid_list) >= total: break
+        if item['anime_id'] not in seen:
+            hybrid_list.append(item)
+            seen.add(item['anime_id'])
+    return pd.DataFrame(hybrid_list[:total])
+
+# --- Slideshow with MAL links ---
 def show_multi_slideshow(recs, slide_key, title):
     if recs.empty:
         st.write("No recommendations.")
@@ -273,16 +334,11 @@ def show_multi_slideshow(recs, slide_key, title):
 
     total_items = len(recs)
     total_slides = (total_items + ITEMS_PER_SLIDE - 1) // ITEMS_PER_SLIDE
-
-    current_slide = st.session_state[slide_key]
-    if current_slide < 0:
-        st.session_state[slide_key] = 0
+    current_slide = st.session_state.get(slide_key, 0)
+    if current_slide >= total_slides:
         current_slide = 0
-    elif current_slide >= total_slides:
-        st.session_state[slide_key] = total_slides - 1
-        current_slide = total_slides - 1
+        st.session_state[slide_key] = 0
 
-    # Remove the "Showing X" header
     st.subheader(f"🔹 {title}")
 
     start_idx = current_slide * ITEMS_PER_SLIDE
@@ -292,26 +348,33 @@ def show_multi_slideshow(recs, slide_key, title):
     for idx, (_, row) in enumerate(batch.iterrows(), start=start_idx + 1):
         title_clean = str(row.get('title', 'Unknown')).replace('"', '&quot;')
         score = row.get('score', 'N/A')
-        img_url = row.get('image_url', '')
-        if pd.isna(img_url) or not str(img_url).strip():
-            img_url = "https://via.placeholder.com/160x220?text=No+Image"
+        img_url = row.get('image_url', '') or "https://via.placeholder.com/160x200?text=No+Image"
         genre_tags = format_genres_as_tags(row.get('genres', []))
+        mal_url = row.get('mal_url', '#')
+        
+        anime_type = row.get('type', 'N/A')
+        year = row.get('year', 'N/A')
+        episodes = row.get('episodes', 'N/A')
+        sequel = str(row.get('sequel', 'N/A'))
+        sequel_display = sequel[:20] + "..." if len(sequel) > 20 else sequel
 
         cards_html += f'''
+        <a href="{mal_url}" target="_blank" rel="noopener noreferrer">
         <div class="anime-card">
             <div class="card-number">{idx}</div>
-            <img src="{img_url}" onerror="this.src='https://via.placeholder.com/160x220?text=No+Image'">
+            <img src="{img_url}" onerror="this.src='https://via.placeholder.com/160x200?text=No+Image'">
             <h4>{title_clean}</h4>
             <div>{genre_tags}</div>
+            <div class="meta-info">Type: {anime_type}</div>
+            <div class="meta-info">Year: {year}</div>
+            <div class="meta-info">Episodes: {episodes}</div>
+            <div class="meta-info">Sequel: {sequel_display}</div>
             <div class="score">Score: {score}</div>
         </div>
+        </a>
         '''
 
-    st.html(f'''
-    <div class="slide-container">
-        {cards_html}
-    </div>
-    ''')
+    st.html(f'<div class="slide-container">{cards_html}</div>')
 
     col1, col2, col3 = st.columns([1, 2, 1])
     with col1:
@@ -323,76 +386,78 @@ def show_multi_slideshow(recs, slide_key, title):
             st.session_state[slide_key] = min(total_slides - 1, current_slide + 1)
             st.rerun()
 
+# --- Initialize session state ---
+for key in ["user_slide", "genre_slide", "hybrid_slide"]:
+    if key not in st.session_state:
+        st.session_state[key] = 0
+
 # --- UI ---
 st.title("🎬 Anime Recommender")
 
 selected_title = st.selectbox("Search your favorite anime:", options=[""] + anime_titles)
 
-# ✅ COLLAPSIBLE FILTER
-with st.expander("FilterWhere", expanded=False):
+# Filter
+with st.expander("Filter", expanded=False):
     col_inc, col_exc = st.columns(2)
     with col_inc:
-        include_genres = st.multiselect(
-            "✅ Include only these genres",
-            options=all_genres,
-            default=[]
-        )
+        include_genres = st.multiselect("✅ Include only these genres", options=all_genres, default=[])
     with col_exc:
-        exclude_genres = st.multiselect(
-            "❌ Exclude these genres",
-            options=all_genres,
-            default=[]
-        )
+        exclude_genres = st.multiselect("❌ Exclude these genres", options=all_genres, default=[])
 
-# --- Apply filter ---
+# Apply filter
 filtered_df = apply_genre_filter(anime_df, include_genres, exclude_genres)
-
-filter_key = f"{tuple(include_genres)}-{tuple(exclude_genres)}"
-if "last_filter_key" not in st.session_state or st.session_state["last_filter_key"] != filter_key:
-    st.session_state["last_filter_key"] = filter_key
-    st.session_state["user_recs_full"] = filtered_df.sample(frac=1, random_state=42).reset_index(drop=True) if not filtered_df.empty else pd.DataFrame()
-    st.session_state["genre_recs_full"] = filtered_df.sample(frac=1, random_state=100).reset_index(drop=True) if not filtered_df.empty else pd.DataFrame()
-    st.session_state["hybrid_recs_full"] = filtered_df.sample(frac=1, random_state=200).reset_index(drop=True) if not filtered_df.empty else pd.DataFrame()
-    st.session_state["user_slide"] = 0
-    st.session_state["genre_slide"] = 0
-    st.session_state["hybrid_slide"] = 0
 
 if not selected_title:
     st.info("👉 Please select an anime to get personalized recommendations!")
 else:
-    selected_anime = anime_df[anime_df['title'].str.lower() == selected_title.lower()]
-    if selected_anime.empty:
-        st.error("❌ Anime not found.")
-    else:
-        with st.spinner("Fetching anime description..."):
-            description, jikan_img = fetch_anime_description(selected_title)
-        
-        row = selected_anime.iloc[0]
-        img_url = jikan_img if jikan_img else row['image_url']
-        if pd.isna(img_url) or not str(img_url).strip():
-            img_url = "https://via.placeholder.com/200x280?text=No+Image"
-        
-        title = row['title']
-        genres = format_genres_as_tags(row['genres'])
-        score = row['score']
+    selected_row = anime_df[anime_df['title'].str.lower() == selected_title.lower()].iloc[0]
+    current_anime_id = selected_row['anime_id']
 
-        st.markdown('<div class="center-container">', unsafe_allow_html=True)
-        st.html(f"""
-        <div class="selected-anime-card">
-            <img src="{img_url}" onerror="this.src='https://via.placeholder.com/200x280?text=No+Image'">
-            <div class="selected-anime-info">
-                <h3>{title}</h3>
-                <div>{genres}</div>
-                <div class="score-text">Score: {score}</div>
-                <div class="description-text">{description}</div>
-            </div>
+    with st.spinner("Fetching anime description..."):
+        description, jikan_img = fetch_anime_description(selected_title)
+
+    img_url = jikan_img or selected_row['image_url'] or "https://via.placeholder.com/200x280?text=No+Image"
+    mal_url = selected_row.get('mal_url', '#')
+
+    # ✅ FIXED: Main anime card is now properly styled and NOT wrapped in <a>
+    st.markdown('<div class="center-container">', unsafe_allow_html=True)
+    st.html(f"""
+    <div class="selected-anime-card">
+        <img src="{img_url}" onerror="this.src='https://via.placeholder.com/200x280?text=No+Image'">
+        <div class="selected-anime-info">
+            <h3>{selected_row['title']}</h3>
+            <div>{format_genres_as_tags(selected_row['genres'])}</div>
+            <div class="score-text">Score: {selected_row['score']}</div>
+            <div class="meta-info-main">Type: {selected_row.get('type', 'N/A')} | Year: {selected_row.get('year', 'N/A')} | Episodes: {selected_row.get('episodes', 'N/A')}</div>
+            <div class="description-text">{description}</div>
+            <a href="{mal_url}" target="_blank" rel="noopener noreferrer" class="mal-button">View on MyAnimeList</a>
         </div>
-        """)
-        st.markdown('</div>', unsafe_allow_html=True)
+    </div>
+    """)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-        st.markdown("---")
-        show_multi_slideshow(st.session_state["user_recs_full"], "user_slide", "User-based Recommendations")
-        st.markdown("---")
-        show_multi_slideshow(st.session_state["genre_recs_full"], "genre_slide", "Genre-based Recommendations")
-        st.markdown("---")
-        show_multi_slideshow(st.session_state["hybrid_recs_full"], "hybrid_slide", "Hybrid Recommendations")
+    st.markdown("---")
+
+    # Generate base recommendations
+    user_recs = get_user_based_recs(current_anime_id, filtered_df, n=100)
+    genre_recs = get_genre_based_recs(selected_row['genres'], filtered_df, current_anime_id, n=100)
+
+    # Display user & genre recs
+    show_multi_slideshow(user_recs, "user_slide", "User-based Recommendations (Placeholder)")
+    st.markdown("---")
+    show_multi_slideshow(genre_recs, "genre_slide", "Genre-based Recommendations (Genres + Detailed)")
+    st.markdown("---")
+
+    # ✅ MOVED HERE: Hybrid control right before hybrid recs
+    st.subheader("🎛️ Hybrid Recommendation Balance")
+    user_weight = st.slider(
+        "User-based vs Genre-based",
+        min_value=0,
+        max_value=100,
+        value=50,
+        format="%d%% User-based"
+    )
+    weight_user = user_weight / 100.0
+    hybrid_recs = combine_hybrid_recs(user_recs, genre_recs, weight_user=weight_user, total=100)
+
+    show_multi_slideshow(hybrid_recs, "hybrid_slide", f"Hybrid Recommendations ({user_weight}% User / {100 - user_weight}% Genre)")
