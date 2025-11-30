@@ -1,40 +1,86 @@
 import streamlit as st
 import pandas as pd
-from pathlib import Path
 
-st.title("Data Explorer")
+# ===========================
+# CONFIG: paths
+# ===========================
+ANIME_META_PATH = r"D:\SRH\big data\cleaned_output\cleaned_anime_metadata_filtered.csv"
 
-st.write(
-    "This page loads a small example dataset from `data/example_data.csv` "
-    "and lets you explore it."
-)
+st.title("Anime Data Explorer")
 
-data_path = Path("data") / "example.csv"
-
+# ===========================
+# LOAD ANIME METADATA
+# ===========================
 try:
-    df = pd.read_csv(data_path)
+    anime_df = pd.read_csv(ANIME_META_PATH)
 except FileNotFoundError:
-    st.error(f"Could not find data file at `{data_path}`.")
+    st.error(f"Could not find anime metadata at {ANIME_META_PATH}")
     st.stop()
 
-st.subheader("Raw data")
-st.dataframe(df, use_container_width=True)
+# Clean numeric columns
+anime_df['year'] = pd.to_numeric(anime_df['year'], errors='coerce')
+anime_df = anime_df.dropna(subset=['year'])
+anime_df['year'] = anime_df['year'].astype(int)
 
-st.subheader("Filter by x value")
-min_x, max_x = float(df["x"].min()), float(df["x"].max())
-selected_range = st.slider(
-    "Select x range",
-    min_value=min_x,
-    max_value=max_x,
-    value=(min_x, max_x),
-)
+anime_df['type'] = anime_df['type'].fillna('Unknown')
+anime_df['episodes'] = pd.to_numeric(anime_df['episodes'], errors='coerce').fillna(0).astype(int)
+anime_df['sequel'] = anime_df['sequel'].fillna('None')
+anime_df['mal_url'] = anime_df['mal_url'].fillna('')
+anime_df['genres'] = anime_df['genres'].fillna('Unknown')
+anime_df['alternative_title'] = anime_df['alternative_title'].fillna('')
 
-mask = (df["x"] >= selected_range[0]) & (df["x"] <= selected_range[1])
-filtered_df = df[mask]
+# ===========================
+# FILTERS
+# ===========================
+st.sidebar.subheader("Filters")
 
-st.write(f"Showing {len(filtered_df)} rows in the selected range.")
-st.dataframe(filtered_df, use_container_width=True)
+# Year filter
+min_year, max_year = int(anime_df['year'].min()), int(anime_df['year'].max())
+selected_year = st.sidebar.slider("Select year range", min_year, max_year, (min_year, max_year))
 
-st.subheader("Line chart of y over x (filtered)")
-st.line_chart(filtered_df.set_index("x")["y"])
+# Type filter
+anime_types = anime_df['type'].unique().tolist()
+selected_types = st.sidebar.multiselect("Select anime types", anime_types, default=anime_types)
 
+# Episodes filter
+max_eps = int(anime_df['episodes'].max())
+selected_episodes = st.sidebar.slider("Max episodes", 0, max_eps, max_eps)
+
+# Apply filters
+filtered_anime = anime_df[
+    (anime_df['year'] >= selected_year[0]) &
+    (anime_df['year'] <= selected_year[1]) &
+    (anime_df['type'].isin(selected_types)) &
+    (anime_df['episodes'] <= selected_episodes)
+]
+
+# ===========================
+# SHOW ANIME METADATA
+# ===========================
+st.subheader(f"Anime Metadata ({len(filtered_anime)} rows)")
+
+# Make URLs clickable
+def make_clickable(url):
+    return f"[Link]({url})" if url else ""
+
+filtered_anime_display = filtered_anime.copy()
+filtered_anime_display['mal_url'] = filtered_anime_display['mal_url'].apply(make_clickable)
+
+# Columns to display
+display_cols = ['title', 'alternative_title', 'type', 'year', 'episodes', 'sequel', 'genres', 'mal_url']
+st.dataframe(filtered_anime_display[display_cols], use_container_width=True)
+
+# ===========================
+# OPTIONAL CHARTS
+# ===========================
+st.subheader("Anime Count by Year")
+year_counts = filtered_anime['year'].value_counts().sort_index()
+st.bar_chart(year_counts)
+
+st.subheader("Anime Count by Type")
+type_counts = filtered_anime['type'].value_counts()
+st.bar_chart(type_counts)
+
+st.subheader("Anime Count by Genre")
+genre_counts = filtered_anime['genres'].str.split(',').explode().str.strip().value_counts()
+st.bar_chart(genre_counts)
