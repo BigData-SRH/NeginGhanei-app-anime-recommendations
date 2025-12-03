@@ -2,6 +2,44 @@ import streamlit as st
 import pandas as pd
 
 # ===========================
+# DARK THEME FOR MAIN CONTENT ONLY
+# ===========================
+st.markdown("""
+<style>
+/* Main content background */
+.stApp > div:first-child {
+    background-color: #000000;
+    color: #e0e0e0;
+}
+
+/* Titles and subtitles */
+.stApp h1, .stApp h2, .stApp h3 {
+    color: #ffffff !important;
+}
+
+/* Paragraphs, labels, text */
+.stApp p, .stApp label, .stApp .stText {
+    color: #d0d0d0 !important;
+}
+
+/* Dataframe text */
+div[data-testid="stDataFrame"] {
+    color: #e0e0e0;
+}
+
+/* Links in main area */
+.stApp a {
+    color: #66b3ff !important;
+}
+
+/* Bar chart text (Streamlit charts inherit from text color) */
+.stApp .stBarChart {
+    color: #ffffff;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ===========================
 # CONFIG: paths
 # ===========================
 ANIME_META_PATH = r"D:\SRH\big data\cleaned_output\cleaned_anime_metadata_filtered.csv"
@@ -30,7 +68,7 @@ anime_df['genres'] = anime_df['genres'].fillna('Unknown')
 anime_df['alternative_title'] = anime_df['alternative_title'].fillna('')
 
 # ===========================
-# FILTERS
+# FILTERS (in sidebar – left as default)
 # ===========================
 st.sidebar.subheader("Filters")
 
