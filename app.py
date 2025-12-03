@@ -10,6 +10,7 @@ import random
 # --- Config ---
 ITEMS_PER_SLIDE = 5
 JIKAN_BASE_URL = "https://api.jikan.moe/v4"
+MAX_RECOMMENDATIONS = 50
 
 # --- Caching for API calls ---
 @st.cache_data(ttl=86400)
@@ -64,7 +65,7 @@ def load_user_recommendations():
         cleaned_recs = {}
         for k, v in raw_recs.items():
             try:
-                key = str(int(float(k)))  # Normalize key to string of int
+                key = str(int(float(k)))
                 rec_ids = []
                 for x in v:
                     try:
@@ -74,7 +75,7 @@ def load_user_recommendations():
                 if rec_ids:
                     cleaned_recs[key] = rec_ids
             except (ValueError, TypeError):
-                continue  # Skip invalid keys
+                continue
         return cleaned_recs
     else:
         st.warning("⚠️ Precomputed recommendations not found. Using random fallback.")
@@ -288,14 +289,17 @@ for genres_list in anime_df['genres']:
         all_genres.update(g for g in genres_list if isinstance(g, str))
 all_genres = sorted(all_genres)
 
-# --- Helper: Apply genre filter ---
-def apply_genre_filter(df, include_genres, exclude_genres):
-    if not include_genres and not exclude_genres:
-        return df
+# --- NEW: Apply genre filter, but NEVER remove the selected anime ---
+def apply_genre_filter(df, include_genres, exclude_genres, preserve_anime_id=None):
     def matches(row):
+        # Always keep the selected anime
+        if preserve_anime_id is not None and row['anime_id'] == preserve_anime_id:
+            return True
         row_genres = set(row['genres']) if isinstance(row['genres'], list) else set()
-        if include_genres and not (row_genres & set(include_genres)): return False
-        if exclude_genres and (row_genres & set(exclude_genres)): return False
+        if include_genres and not (row_genres & set(include_genres)):
+            return False
+        if exclude_genres and (row_genres & set(exclude_genres)):
+            return False
         return True
     return df[df.apply(matches, axis=1)].reset_index(drop=True)
 
@@ -308,14 +312,9 @@ def format_genres_as_tags(genres_list):
         tags.append(f'<span class="genre-tag">{g_clean}</span>')
     return " ".join(tags) if tags else "N/A"
 
-# --- REAL USER-BASED RECOMMENDATIONS FROM JSON ---
-def get_user_based_recs(current_anime_id, df, n=100):
-    """
-    Get co-occurrence recommendations from precomputed JSON.
-    Fallback to random if not found.
-    """
+# --- Recommendation functions (unchanged, still use filtered_df for candidates) ---
+def get_user_based_recs(current_anime_id, df, n=MAX_RECOMMENDATIONS):
     key = str(int(current_anime_id))
-    
     if key in user_based_recs_json:
         rec_ids = user_based_recs_json[key][:n]
     else:
@@ -324,16 +323,10 @@ def get_user_based_recs(current_anime_id, df, n=100):
             return pd.DataFrame()
         return candidates.sample(n=min(n, len(candidates)), random_state=42).reset_index(drop=True)
     
-    # Keep order from JSON
     rec_df = df[df['anime_id'].isin(rec_ids)].copy()
-    rec_df['sort_key'] = pd.Categorical(
-        rec_df['anime_id'],
-        categories=rec_ids,
-        ordered=True
-    )
+    rec_df['sort_key'] = pd.Categorical(rec_df['anime_id'], categories=rec_ids, ordered=True)
     rec_df = rec_df.sort_values('sort_key').drop('sort_key', axis=1).reset_index(drop=True)
     
-    # Pad if needed
     if len(rec_df) < n:
         missing = n - len(rec_df)
         pool = df[~df['anime_id'].isin(rec_ids) & (df['anime_id'] != current_anime_id)]
@@ -343,8 +336,7 @@ def get_user_based_recs(current_anime_id, df, n=100):
     
     return rec_df.head(n).reset_index(drop=True)
 
-# --- Genre-based recs (unchanged) ---
-def get_genre_based_recs(selected_genres, df, current_anime_id, n=100):
+def get_genre_based_recs(selected_genres, df, current_anime_id, n=MAX_RECOMMENDATIONS):
     selected_genres = set(selected_genres)
     if not selected_genres:
         candidates = df[df['anime_id'] != current_anime_id]
@@ -363,8 +355,7 @@ def get_genre_based_recs(selected_genres, df, current_anime_id, n=100):
     if candidates.empty: candidates = df[df['anime_id'] != current_anime_id]
     return candidates.head(n).reset_index(drop=True)[[col for col in df.columns if col != 'overlap']]
 
-# --- Hybrid recs (unchanged) ---
-def combine_hybrid_recs(user_recs, genre_recs, weight_user=0.5, total=100):
+def combine_hybrid_recs(user_recs, genre_recs, weight_user=0.5, total=MAX_RECOMMENDATIONS):
     hybrid_list = []
     user_list = user_recs.to_dict('records')
     genre_list = genre_recs.to_dict('records')
@@ -389,8 +380,8 @@ def combine_hybrid_recs(user_recs, genre_recs, weight_user=0.5, total=100):
             seen.add(item['anime_id'])
     return pd.DataFrame(hybrid_list[:total])
 
-# --- Slideshow component ---
 def show_multi_slideshow(recs, slide_key, title):
+    recs = recs.head(MAX_RECOMMENDATIONS).reset_index(drop=True)
     if recs.empty:
         st.write("No recommendations.")
         return
@@ -402,7 +393,7 @@ def show_multi_slideshow(recs, slide_key, title):
         current_slide = 0
         st.session_state[slide_key] = 0
 
-    st.subheader(f"🔹 {title}")
+    st.subheader(f"🔹 {title} (Top {min(MAX_RECOMMENDATIONS, total_items)})")
 
     start_idx = current_slide * ITEMS_PER_SLIDE
     batch = recs.iloc[start_idx : start_idx + ITEMS_PER_SLIDE]
@@ -456,25 +447,47 @@ for key in ["user_slide", "genre_slide", "hybrid_slide"]:
 
 # --- UI ---
 st.title("🎬 Anime Recommender")
+st.info("💡 Recommendations are limited to **50 anime** per strategy for performance and clarity.")
 
 selected_title = st.selectbox("Search your favorite anime:", options=[""] + anime_titles)
 
-# Filter
-with st.expander("Filter", expanded=False):
-    col_inc, col_exc = st.columns(2)
-    with col_inc:
-        include_genres = st.multiselect("✅ Include only these genres", options=all_genres, default=[])
-    with col_exc:
-        exclude_genres = st.multiselect("❌ Exclude these genres", options=all_genres, default=[])
+include_genres = []
+exclude_genres = []
 
-# Apply filter
-filtered_df = apply_genre_filter(anime_df, include_genres, exclude_genres)
+with st.expander("Filter", expanded=False):
+    st.markdown("⚠️ **You can either INCLUDE or EXCLUDE genres — not both.**")
+    col1, col2 = st.columns(2)
+    with col1:
+        include_genres = st.multiselect("✅ Include only these genres", options=all_genres)
+    with col2:
+        exclude_genres = st.multiselect("❌ Exclude these genres", options=all_genres)
+    
+    if include_genres and exclude_genres:
+        st.error("❌ You cannot use **Include** and **Exclude** filters at the same time. Please choose one.")
+        st.stop()
 
 if not selected_title:
     st.info("👉 Please select an anime to get personalized recommendations!")
 else:
     selected_row = anime_df[anime_df['title'].str.lower() == selected_title.lower()].iloc[0]
     current_anime_id = selected_row['anime_id']
+
+    # Apply filter, but PRESERVE the selected anime
+    filtered_df = apply_genre_filter(
+        anime_df,
+        include_genres,
+        exclude_genres,
+        preserve_anime_id=current_anime_id  # 🔑 KEY CHANGE
+    )
+
+    # ⬇️ SMART WARNING: ONLY IF ALL GENRES EXCLUDED ⬇️
+    if exclude_genres:
+        exclude_set = set(exclude_genres)
+        original_genres = set(selected_row['genres']) if isinstance(selected_row['genres'], list) else set()
+        
+        # Now the selected anime is ALWAYS in filtered_df, so we only check subset condition
+        if original_genres and original_genres.issubset(exclude_set):
+            st.warning("⚠️ **Warning**: You've excluded all genres of the selected anime. Recommendations may not be accurate.")
 
     with st.spinner("Fetching anime description..."):
         description, jikan_img = fetch_anime_description(selected_title)
@@ -500,17 +513,14 @@ else:
 
     st.markdown("---")
 
-    # Generate recommendations
-    user_recs = get_user_based_recs(current_anime_id, filtered_df, n=100)
-    genre_recs = get_genre_based_recs(selected_row['genres'], filtered_df, current_anime_id, n=100)
-
-    # Display
+    user_recs = get_user_based_recs(current_anime_id, filtered_df, n=MAX_RECOMMENDATIONS)
+    genre_recs = get_genre_based_recs(selected_row['genres'], filtered_df, current_anime_id, n=MAX_RECOMMENDATIONS)
+    
     show_multi_slideshow(user_recs, "user_slide", "Co-occurrence Recommendations (Real)")
     st.markdown("---")
     show_multi_slideshow(genre_recs, "genre_slide", "Genre-based Recommendations (Genres + Detailed)")
     st.markdown("---")
 
-    # Hybrid
     st.subheader("🎛️ Hybrid Recommendation Balance")
     user_weight = st.slider(
         "User-based vs Genre-based",
@@ -520,6 +530,6 @@ else:
         format="%d%% User-based"
     )
     weight_user = user_weight / 100.0
-    hybrid_recs = combine_hybrid_recs(user_recs, genre_recs, weight_user=weight_user, total=100)
+    hybrid_recs = combine_hybrid_recs(user_recs, genre_recs, weight_user=weight_user, total=MAX_RECOMMENDATIONS)
 
     show_multi_slideshow(hybrid_recs, "hybrid_slide", f"Hybrid Recommendations ({user_weight}% User / {100 - user_weight}% Genre)")
