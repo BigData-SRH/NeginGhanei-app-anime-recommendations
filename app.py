@@ -289,7 +289,7 @@ for genres_list in anime_df['genres']:
         all_genres.update(g for g in genres_list if isinstance(g, str))
 all_genres = sorted(all_genres)
 
-# --- NEW: Apply genre filter, but NEVER remove the selected anime ---
+# --- Apply genre filter, but NEVER remove the selected anime ---
 def apply_genre_filter(df, include_genres, exclude_genres, preserve_anime_id=None):
     def matches(row):
         # Always keep the selected anime
@@ -312,7 +312,7 @@ def format_genres_as_tags(genres_list):
         tags.append(f'<span class="genre-tag">{g_clean}</span>')
     return " ".join(tags) if tags else "N/A"
 
-# --- Recommendation functions (unchanged, still use filtered_df for candidates) ---
+# --- Recommendation functions ---
 def get_user_based_recs(current_anime_id, df, n=MAX_RECOMMENDATIONS):
     key = str(int(current_anime_id))
     if key in user_based_recs_json:
@@ -454,16 +454,22 @@ selected_title = st.selectbox("Search your favorite anime:", options=[""] + anim
 include_genres = []
 exclude_genres = []
 
+# 🔥 UPDATED FILTER LOGIC 🔥
 with st.expander("Filter", expanded=False):
-    st.markdown("⚠️ **You can either INCLUDE or EXCLUDE genres — not both.**")
+    st.markdown("🔹 You may **include** some genres, **exclude** others, or do either — but **not both for the same genre**.")
     col1, col2 = st.columns(2)
     with col1:
         include_genres = st.multiselect("✅ Include only these genres", options=all_genres)
     with col2:
         exclude_genres = st.multiselect("❌ Exclude these genres", options=all_genres)
     
-    if include_genres and exclude_genres:
-        st.error("❌ You cannot use **Include** and **Exclude** filters at the same time. Please choose one.")
+    # Prevent same genre in both lists
+    include_set = set(include_genres)
+    exclude_set = set(exclude_genres)
+    conflicting = include_set & exclude_set
+    
+    if conflicting:
+        st.error(f"❌ Conflict: You cannot both include and exclude the same genre(s): {', '.join(sorted(conflicting))}")
         st.stop()
 
 if not selected_title:
@@ -477,15 +483,13 @@ else:
         anime_df,
         include_genres,
         exclude_genres,
-        preserve_anime_id=current_anime_id  # 🔑 KEY CHANGE
+        preserve_anime_id=current_anime_id
     )
 
-    # ⬇️ SMART WARNING: ONLY IF ALL GENRES EXCLUDED ⬇️
+    # ⚠️ Warning only when EXCLUDING all genres of selected anime
     if exclude_genres:
         exclude_set = set(exclude_genres)
         original_genres = set(selected_row['genres']) if isinstance(selected_row['genres'], list) else set()
-        
-        # Now the selected anime is ALWAYS in filtered_df, so we only check subset condition
         if original_genres and original_genres.issubset(exclude_set):
             st.warning("⚠️ **Warning**: You've excluded all genres of the selected anime. Recommendations may not be accurate.")
 
