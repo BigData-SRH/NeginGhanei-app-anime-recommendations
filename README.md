@@ -3,7 +3,7 @@
 A multi-strategy anime recommendation system that helps users discover personalized, hidden, and polarizing anime — all inside a clean, dark-themed Streamlit interface.
 
 🔗 **Live Demo:**  
-https://neginghnei-app-anime-recommendations-h2ugr7mps9trptipfnsmug.streamlit.app/
+https://neginghanei-app-anime-recommendations-h2ugr7mps9trptipfnsmug.streamlit.app/
 
 ---
 
