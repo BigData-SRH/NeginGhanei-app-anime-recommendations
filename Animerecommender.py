@@ -432,11 +432,11 @@ def show_multi_slideshow(recs, slide_key, title):
 
     col1, col2, col3 = st.columns([1, 2, 1])
     with col1:
-        if st.button("⬅️ Previous", key=f"prev_{slide_key}"):
+        if st.button(" Previous", key=f"prev_{slide_key}"):
             st.session_state[slide_key] = max(0, current_slide - 1)
             st.rerun()
     with col3:
-        if st.button("Next ➡️", key=f"next_{slide_key}"):
+        if st.button("Next ", key=f"next_{slide_key}"):
             st.session_state[slide_key] = min(total_slides - 1, current_slide + 1)
             st.rerun()
 
@@ -520,9 +520,9 @@ else:
     user_recs = get_user_based_recs(current_anime_id, filtered_df, n=MAX_RECOMMENDATIONS)
     genre_recs = get_genre_based_recs(selected_row['genres'], filtered_df, current_anime_id, n=MAX_RECOMMENDATIONS)
     
-    show_multi_slideshow(user_recs, "user_slide", "Co-occurrence Recommendations (Real)")
+    show_multi_slideshow(user_recs, "user_slide", "Co-occurrence Recommendations")
     st.markdown("---")
-    show_multi_slideshow(genre_recs, "genre_slide", "Genre-based Recommendations (Genres + Detailed)")
+    show_multi_slideshow(genre_recs, "genre_slide", "Genre-based Recommendations")
     st.markdown("---")
 
     st.subheader("🎛️ Hybrid Recommendation Balance")
