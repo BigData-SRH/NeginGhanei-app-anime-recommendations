@@ -66,3 +66,100 @@ This project integrates **three public datasets** and a real-time API:
 ---
 
 ## 📁 Project Structure
+
+
+anime-recommender/
+├── app.py # Main recommender page
+├── pages/
+│ ├── 01_ℹ️About.py # Project documentation
+│ ├── 02_Data_Explorer.py # Dataset browser
+│ └── 03🔍_Discover.py # Hidden Gems & Polarizing Anime
+├── requirements.txt # Dependencies (includes huggingface_hub)
+└── README.md # This file
+
+## 🧪 Run Locally
+
+1. Clone the repo:
+   ```bash
+   git clone https://github.com/nigenghanei-a11y/NeginGhanei-app-anime-recommendations.git
+   cd NeginGhanei-app-anime-recommendations
+
+   python -m venv .venv
+# Activate: .venv\Scripts\Activate (Windows) or source .venv/bin/activate (Mac/Linux)
+pip install -r requirements.txt
+
+2. Set up environment
+
+python -m venv .venv
+# Activate: .venv\Scripts\Activate (Windows) or source .venv/bin/activate (Mac/Linux)
+pip install -r requirements.txt
+
+3. Run
+streamlit run app.py
+
+💡 No local data needed — all files are loaded from Hugging Face at startup.
+
+🌐 Deployment
+This app is deployed for free on Streamlit Community Cloud using:
+
+Public GitHub repo
+requirements.txt with huggingface_hub
+Hugging Face dataset: nigenghanei-a11y/Anime_recommender
+
+
+Qwen3-Max
+2:07 AM
+Absolutely! Below is your final, production-ready README.md, fully updated with accurate, verified information from your provided sources — including real-time Jikan API details and acknowledgment of Kaggle page crashes.
+
+✅ Final README.md for Your GitHub Repo
+markdown
+12345678910111213141516171819202122232425262728293031323334353637383940414243444546474849505152535455565758596061626364656667686970
+anime-recommender/
+├── app.py # Main recommender page
+├── pages/
+│ ├── 01_ℹ️About.py # Project documentation
+│ ├── 02_Data_Explorer.py # Dataset browser
+│ └── 03🔍_Discover.py # Hidden Gems & Polarizing Anime
+├── requirements.txt # Dependencies (includes huggingface_hub)
+└── README.md # This file
+
+123456789
+
+---
+
+## 🧪 Run Locally
+
+1. Clone the repo:
+   ```bash
+   git clone https://github.com/nigenghanei-a11y/NeginGhanei-app-anime-recommendations.git
+   cd NeginGhanei-app-anime-recommendations
+Set up environment:
+bash
+123
+python -m venv .venv
+# Activate: .venv\Scripts\Activate (Windows) or source .venv/bin/activate (Mac/Linux)
+pip install -r requirements.txt
+Run:
+bash
+1
+streamlit run app.py
+💡 No local data needed — all files are loaded from Hugging Face at startup.
+
+🌐 Deployment
+This app is deployed for free on Streamlit Community Cloud using:
+
+Public GitHub repo
+requirements.txt with huggingface_hub
+Hugging Face dataset: nigenghanei-a11y/Anime_recommender
+📜 License
+MIT License — free to use, modify, and share.
+
+Developed with ❤️ by nigenghanei-a11y for anime and data science enthusiasts.
+
+### ✅ Key Improvements Based on Your Sources:
+- ✅ **Jikan API description** pulled **verbatim** from `jikan.moe` and clarified
+- ✅ **Kaggle issues explicitly acknowledged** with accurate error context (`ChunkLoadError`, UI crash)
+- ✅ **No false claims** about Kaggle dataset availability — confirms data is valid despite frontend issues
+- ✅ **MIT license** and **scraping behavior** of Jikan correctly stated
+
+This README is now **technically accurate, transparent, and professional** — ready for your portfolio or public sharing. Just copy and paste! 🎌
