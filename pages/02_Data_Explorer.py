@@ -1,9 +1,10 @@
 import streamlit as st
 import pandas as pd
 import ast
+from huggingface_hub import hf_hub_download
 
 # ===========================
-# DARK THEME + CLEAN WHITE SIDEBAR (NO YELLOW)
+# DARK THEME + CLEAN WHITE SIDEBAR
 # ===========================
 st.markdown("""
 <style>
@@ -46,20 +47,16 @@ a {
     color: #66b3ff !important;
 }
 
-/* === SIDEBAR: CLEAN WHITE, BLACK TEXT, NO YELLOW === */
+/* === SIDEBAR: CLEAN WHITE, BLACK TEXT === */
 [data-testid="stSidebar"] {
     background-color: white !important;
 }
-
-/* All sidebar text black */
 [data-testid="stSidebar"] *,
 [data-testid="stSidebar"] .stMarkdown,
 [data-testid="stSidebar"] label,
 [data-testid="stSidebar"] .stSubheader {
     color: #000000 !important;
 }
-
-/* Slider and multiselect: default but readable */
 [data-testid="stSidebar"] div[data-baseweb="slider"] > div:first-child {
     background: linear-gradient(to right, #cccccc, #999999) !important;
 }
@@ -75,43 +72,50 @@ a {
 </style>
 """, unsafe_allow_html=True)
 
-# ===========================
-# CONFIG
-# ===========================
-ANIME_META_PATH = r"D:\SRH\big data\cleaned_output\cleaned_anime_metadata_filtered.csv"
+# --- Load data from Hugging Face ---
+@st.cache_resource
+def load_anime_metadata():
+    HF_REPO_ID = "nigenghanei-a11y/Anime_recommender"
+    HF_REPO_TYPE = "dataset"
+    meta_path = hf_hub_download(
+        repo_id=HF_REPO_ID,
+        filename="cleaned_anime_metadata_filtered.csv",
+        repo_type=HF_REPO_TYPE
+    )
+    df = pd.read_csv(meta_path)
+    
+    def safe_literal_eval(x):
+        if pd.isna(x) or x == "" or x == "Unknown" or str(x).strip() in ("[]", "['']"):
+            return []
+        try:
+            return ast.literal_eval(str(x))
+        except (ValueError, SyntaxError):
+            return []
 
+    df['genres'] = df['genres'].apply(safe_literal_eval)
+    # Normalize case: "movie" → "Movie", but preserve "TV" as "TV"
+    df['type'] = df['type'].astype(str).str.strip()
+    # Capitalize only if not already proper (e.g., "TV" stays "TV")
+    df['type'] = df['type'].apply(lambda x: x.capitalize() if x.islower() else x)
+
+    df['year_numeric'] = pd.to_numeric(df['year'], errors='coerce')
+    df['year_display'] = df['year_numeric'].fillna(0).astype(int)
+
+    df['episodes'] = pd.to_numeric(df['episodes'], errors='coerce').fillna(0).astype(int)
+    df['sequel'] = df['sequel'].fillna('None')
+    df['mal_url'] = df['mal_url'].fillna('')
+    df['alternative_title'] = df['alternative_title'].fillna('')
+
+    return df
+
+# ===========================
+# UI
+# ===========================
 st.title("Anime Data Explorer")
 
-# ===========================
-# LOAD & CLEAN DATA
-# ===========================
-try:
-    anime_df = pd.read_csv(ANIME_META_PATH)
-except FileNotFoundError:
-    st.error(f"Could not find anime metadata at {ANIME_META_PATH}")
-    st.stop()
-
+anime_df = load_anime_metadata()
 ORIGINAL_ROWS = len(anime_df)
 st.caption(f"✅ Loaded {ORIGINAL_ROWS} anime records.")
-
-def safe_literal_eval(x):
-    if pd.isna(x) or x == "" or x == "Unknown" or str(x).strip() in ("[]", "['']"):
-        return []
-    try:
-        return ast.literal_eval(str(x))
-    except (ValueError, SyntaxError):
-        return []
-
-anime_df['genres'] = anime_df['genres'].apply(safe_literal_eval)
-anime_df['type'] = anime_df['type'].astype(str).str.strip().str.capitalize()
-
-anime_df['year_numeric'] = pd.to_numeric(anime_df['year'], errors='coerce')
-anime_df['year_display'] = anime_df['year_numeric'].fillna(0).astype(int)
-
-anime_df['episodes'] = pd.to_numeric(anime_df['episodes'], errors='coerce').fillna(0).astype(int)
-anime_df['sequel'] = anime_df['sequel'].fillna('None')
-anime_df['mal_url'] = anime_df['mal_url'].fillna('')
-anime_df['alternative_title'] = anime_df['alternative_title'].fillna('')
 
 # ===========================
 # SIDEBAR FILTERS

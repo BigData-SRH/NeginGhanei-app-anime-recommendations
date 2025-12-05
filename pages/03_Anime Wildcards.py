@@ -1,6 +1,6 @@
 import streamlit as st
 import json
-import os
+from huggingface_hub import hf_hub_download
 
 # --- CONFIG ---
 ITEMS_PER_SLIDE = 5
@@ -60,7 +60,7 @@ div[data-testid="stExpander"] div[data-testid="stExpanderContent"] {
     height: 420px;
     width: 160px;
     flex-shrink: 0;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    box-shadow: 0 2px 6 0 rgba(0,0,0,0.3);
     overflow-y: auto;
     position: relative;
     transition: transform 0.2s;
@@ -140,7 +140,7 @@ div[data-testid="stExpander"] div[data-testid="stExpanderContent"] {
 </style>
 """, unsafe_allow_html=True)
 
-# --- Helper: Format genres as tags (same as main app) ---
+# --- Helper: Format genres as tags ---
 def format_genres_as_tags(genres_list):
     if not isinstance(genres_list, list): return "N/A"
     tags = []
@@ -149,20 +149,29 @@ def format_genres_as_tags(genres_list):
         tags.append(f'<span class="genre-tag">{g_clean}</span>')
     return " ".join(tags) if tags else "N/A"
 
-# --- Load precomputed discover data ---
-DISCOVER_JSON = r"D:\SRH\big data\cleaned_output\discover.json"
+# --- Load discover.json from Hugging Face ---
+@st.cache_resource
+def load_discover_data():
+    HF_REPO_ID = "nigenghanei-a11y/Anime_recommender"
+    HF_REPO_TYPE = "dataset"
+    discover_path = hf_hub_download(
+        repo_id=HF_REPO_ID,
+        filename="discover.json",
+        repo_type=HF_REPO_TYPE
+    )
+    with open(discover_path, 'r', encoding='utf-8') as f:
+        return json.load(f)
 
-if not os.path.exists(DISCOVER_JSON):
-    st.error("❌ Precomputed data not found. Run `precompute_discover.py` first.")
+# --- Load data ---
+try:
+    discover_data = load_discover_data()
+    hidden_gems = discover_data.get("hidden_gems", [])
+    polarizing_anime = discover_data.get("polarizing_anime", [])
+except Exception as e:
+    st.error(f"❌ Failed to load discovery data: {str(e)}")
     st.stop()
 
-with open(DISCOVER_JSON, 'r', encoding='utf-8') as f:
-    discover_data = json.load(f)
-
-hidden_gems = discover_data.get("hidden_gems", [])
-polarizing_anime = discover_data.get("polarizing_anime", [])
-
-# --- Slideshow component (same logic as main app) ---
+# --- Slideshow component ---
 def show_discover_slideshow(items, slide_key, title):
     if not items:
         st.write("No items to display.")
@@ -194,7 +203,6 @@ def show_discover_slideshow(items, slide_key, title):
         sequel = str(item.get('sequel', 'N/A'))
         sequel_display = sequel[:20] + "..." if len(sequel) > 20 else sequel
 
-        # For Polarizing, show std; for Hidden Gems, show rating count
         extra_info = ""
         if "std_rating" in item:
             extra_info = f"<div class=\"meta-info\">σ: {item['std_rating']:.2f}</div>"
@@ -205,7 +213,7 @@ def show_discover_slideshow(items, slide_key, title):
         <a href="{mal_url}" target="_blank" rel="noopener noreferrer">
         <div class="anime-card">
             <div class="card-number">{idx}</div>
-            <img src="{img_url}" onerror="this.src='https://via.placeholder.com/160x200?text=No+Image'">
+            <img src="{img_url}" onerror="this.src=&quot;https://via.placeholder.com/160x200?text=No+Image&quot;">
             <h4>{title_clean}</h4>
             <div>{genre_tags}</div>
             <div class="meta-info">Type: {anime_type}</div>

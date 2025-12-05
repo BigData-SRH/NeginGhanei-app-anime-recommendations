@@ -3,14 +3,19 @@ import pandas as pd
 import ast
 import requests
 import json
-import os
 from urllib.parse import quote
 import random
+from huggingface_hub import hf_hub_download
+import html
 
 # --- Config ---
 ITEMS_PER_SLIDE = 5
 JIKAN_BASE_URL = "https://api.jikan.moe/v4"
 MAX_RECOMMENDATIONS = 50
+
+# --- Hugging Face Dataset ---
+HF_REPO_ID = "nigenghanei-a11y/Anime_recommender"
+HF_REPO_TYPE = "dataset"
 
 # --- Caching for API calls ---
 @st.cache_data(ttl=86400)
@@ -29,11 +34,13 @@ def fetch_anime_description(title):
     except Exception as e:
         return f"Error fetching description: {str(e)}", ""
 
-# --- Load and preprocess dataset ---
-@st.cache_data
-def load_anime_data():
-    df = pd.read_csv(r"D:\SRH\big data\cleaned_output\cleaned_anime_metadata_filtered.csv")
+# --- Load data from Hugging Face (one-time) ---
+@st.cache_resource
+def load_data_from_hf():
+    meta_path = hf_hub_download(repo_id=HF_REPO_ID, filename="cleaned_anime_metadata_filtered.csv", repo_type=HF_REPO_TYPE)
+    recs_path = hf_hub_download(repo_id=HF_REPO_ID, filename="user_recs_top100.json", repo_type=HF_REPO_TYPE)
 
+    df = pd.read_csv(meta_path)
     required_cols = ['title', 'genres', 'score', 'image_url', 'anime_id', 'genres_detailed',
                      'type', 'year', 'episodes', 'mal_url', 'sequel']
     for col in required_cols:
@@ -45,41 +52,28 @@ def load_anime_data():
         if pd.isna(x) or x.strip() == "" or x == "[]":
             return []
         try:
-            parsed = ast.literal_eval(x)
-            return parsed if isinstance(parsed, list) else []
+            return ast.literal_eval(x)
         except:
             return []
 
     df['genres'] = df['genres'].apply(safe_literal_eval)
     df['genres_detailed'] = df['genres_detailed'].apply(safe_literal_eval)
     df = df.dropna(subset=['title', 'anime_id']).reset_index(drop=True)
-    return df
 
-# --- Load precomputed user recommendations from JSON ---
-@st.cache_data
-def load_user_recommendations():
-    recs_path = r"D:\SRH\big data\cleaned_output\user_recs_top100.json"
-    if os.path.exists(recs_path):
-        with open(recs_path, 'r', encoding='utf-8') as f:
-            raw_recs = json.load(f)
-        cleaned_recs = {}
-        for k, v in raw_recs.items():
-            try:
-                key = str(int(float(k)))
-                rec_ids = []
-                for x in v:
-                    try:
-                        rec_ids.append(int(x))
-                    except (ValueError, TypeError):
-                        continue
-                if rec_ids:
-                    cleaned_recs[key] = rec_ids
-            except (ValueError, TypeError):
-                continue
-        return cleaned_recs
-    else:
-        st.warning("⚠️ Precomputed recommendations not found. Using random fallback.")
-        return {}
+    with open(recs_path, 'r', encoding='utf-8') as f:
+        raw_recs = json.load(f)
+    
+    cleaned_recs = {}
+    for k, v in raw_recs.items():
+        try:
+            key = str(int(float(k)))
+            rec_ids = [int(x) for x in v if str(x).isdigit()]
+            if rec_ids:
+                cleaned_recs[key] = rec_ids
+        except (ValueError, TypeError):
+            continue
+
+    return df, cleaned_recs
 
 # --- Page config ---
 st.set_page_config(page_title="Anime Recommender", layout="wide")
@@ -276,23 +270,19 @@ div[data-testid="stExpander"] div[data-testid="stExpanderContent"] {
 """, unsafe_allow_html=True)
 
 # --- Load data ---
-anime_df = load_anime_data()
+anime_df, user_based_recs_json = load_data_from_hf()
 anime_titles = anime_df['title'].tolist()
 
-# --- Load precomputed recommendations ---
-user_based_recs_json = load_user_recommendations()
-
-# --- Extract all genres ---
+# --- Extract genres ---
 all_genres = set()
-for genres_list in anime_df['genres']:
-    if isinstance(genres_list, list):
-        all_genres.update(g for g in genres_list if isinstance(g, str))
+for g_list in anime_df['genres']:
+    if isinstance(g_list, list):
+        all_genres.update(str(g).strip() for g in g_list)
 all_genres = sorted(all_genres)
 
-# --- Apply genre filter, but NEVER remove the selected anime ---
+# --- Helper functions ---
 def apply_genre_filter(df, include_genres, exclude_genres, preserve_anime_id=None):
     def matches(row):
-        # Always keep the selected anime
         if preserve_anime_id is not None and row['anime_id'] == preserve_anime_id:
             return True
         row_genres = set(row['genres']) if isinstance(row['genres'], list) else set()
@@ -303,25 +293,18 @@ def apply_genre_filter(df, include_genres, exclude_genres, preserve_anime_id=Non
         return True
     return df[df.apply(matches, axis=1)].reset_index(drop=True)
 
-# --- Helper: Format genres as tags ---
 def format_genres_as_tags(genres_list):
     if not isinstance(genres_list, list): return "N/A"
-    tags = []
-    for g in genres_list[:5]:
-        g_clean = str(g).strip()
-        tags.append(f'<span class="genre-tag">{g_clean}</span>')
+    tags = [f'<span class="genre-tag">{str(g).strip()}</span>' for g in genres_list[:5]]
     return " ".join(tags) if tags else "N/A"
 
-# --- Recommendation functions ---
 def get_user_based_recs(current_anime_id, df, n=MAX_RECOMMENDATIONS):
     key = str(int(current_anime_id))
     if key in user_based_recs_json:
         rec_ids = user_based_recs_json[key][:n]
     else:
         candidates = df[df['anime_id'] != current_anime_id]
-        if candidates.empty:
-            return pd.DataFrame()
-        return candidates.sample(n=min(n, len(candidates)), random_state=42).reset_index(drop=True)
+        return candidates.sample(n=min(n, len(candidates)), random_state=42).reset_index(drop=True) if not candidates.empty else pd.DataFrame()
     
     rec_df = df[df['anime_id'].isin(rec_ids)].copy()
     rec_df['sort_key'] = pd.Categorical(rec_df['anime_id'], categories=rec_ids, ordered=True)
@@ -333,7 +316,6 @@ def get_user_based_recs(current_anime_id, df, n=MAX_RECOMMENDATIONS):
         if not pool.empty:
             pad = pool.sample(n=min(missing, len(pool)), random_state=42)
             rec_df = pd.concat([rec_df, pad], ignore_index=True)
-    
     return rec_df.head(n).reset_index(drop=True)
 
 def get_genre_based_recs(selected_genres, df, current_anime_id, n=MAX_RECOMMENDATIONS):
@@ -400,29 +382,29 @@ def show_multi_slideshow(recs, slide_key, title):
 
     cards_html = ""
     for idx, (_, row) in enumerate(batch.iterrows(), start=start_idx + 1):
-        title_clean = str(row.get('title', 'Unknown')).replace('"', '&quot;')
+        title_clean = html.escape(str(row.get('title', 'Unknown')))
         score = row.get('score', 'N/A')
         img_url = row.get('image_url', '') or "https://via.placeholder.com/160x200?text=No+Image"
         genre_tags = format_genres_as_tags(row.get('genres', []))
         mal_url = row.get('mal_url', '#')
-        
         anime_type = row.get('type', 'N/A')
         year = row.get('year', 'N/A')
         episodes = row.get('episodes', 'N/A')
         sequel = str(row.get('sequel', 'N/A'))
-        sequel_display = sequel[:20] + "..." if len(sequel) > 20 else sequel
+        if len(sequel) > 20:
+            sequel = sequel[:20] + "..."
 
         cards_html += f'''
         <a href="{mal_url}" target="_blank" rel="noopener noreferrer">
         <div class="anime-card">
             <div class="card-number">{idx}</div>
-            <img src="{img_url}" onerror="this.src='https://via.placeholder.com/160x200?text=No+Image'">
+            <img src="{img_url}" onerror="this.src=&quot;https://via.placeholder.com/160x200?text=No+Image&quot;">
             <h4>{title_clean}</h4>
             <div>{genre_tags}</div>
             <div class="meta-info">Type: {anime_type}</div>
             <div class="meta-info">Year: {year}</div>
             <div class="meta-info">Episodes: {episodes}</div>
-            <div class="meta-info">Sequel: {sequel_display}</div>
+            <div class="meta-info">Sequel: {sequel}</div>
             <div class="score">Score: {score}</div>
         </div>
         </a>
@@ -432,11 +414,11 @@ def show_multi_slideshow(recs, slide_key, title):
 
     col1, col2, col3 = st.columns([1, 2, 1])
     with col1:
-        if st.button(" Previous", key=f"prev_{slide_key}"):
+        if st.button("⬅️ Previous", key=f"prev_{slide_key}"):
             st.session_state[slide_key] = max(0, current_slide - 1)
             st.rerun()
     with col3:
-        if st.button("Next ", key=f"next_{slide_key}"):
+        if st.button("Next ➡️", key=f"next_{slide_key}"):
             st.session_state[slide_key] = min(total_slides - 1, current_slide + 1)
             st.rerun()
 
@@ -454,7 +436,6 @@ selected_title = st.selectbox("Search your favorite anime:", options=[""] + anim
 include_genres = []
 exclude_genres = []
 
-# 🔥 UPDATED FILTER LOGIC 🔥
 with st.expander("Filter", expanded=False):
     st.markdown("🔹 You may **include** some genres, **exclude** others, or do either — but **not both for the same genre**.")
     col1, col2 = st.columns(2)
@@ -463,11 +444,9 @@ with st.expander("Filter", expanded=False):
     with col2:
         exclude_genres = st.multiselect("❌ Exclude these genres", options=all_genres)
     
-    # Prevent same genre in both lists
     include_set = set(include_genres)
     exclude_set = set(exclude_genres)
     conflicting = include_set & exclude_set
-    
     if conflicting:
         st.error(f"❌ Conflict: You cannot both include and exclude the same genre(s): {', '.join(sorted(conflicting))}")
         st.stop()
@@ -478,7 +457,6 @@ else:
     selected_row = anime_df[anime_df['title'].str.lower() == selected_title.lower()].iloc[0]
     current_anime_id = selected_row['anime_id']
 
-    # Apply filter, but PRESERVE the selected anime
     filtered_df = apply_genre_filter(
         anime_df,
         include_genres,
@@ -486,7 +464,6 @@ else:
         preserve_anime_id=current_anime_id
     )
 
-    # ⚠️ Warning only when EXCLUDING all genres of selected anime
     if exclude_genres:
         exclude_set = set(exclude_genres)
         original_genres = set(selected_row['genres']) if isinstance(selected_row['genres'], list) else set()
@@ -502,9 +479,9 @@ else:
     st.markdown('<div class="center-container">', unsafe_allow_html=True)
     st.html(f"""
     <div class="selected-anime-card">
-        <img src="{img_url}" onerror="this.src='https://via.placeholder.com/200x280?text=No+Image'">
+        <img src="{img_url}" onerror="this.src=&quot;https://via.placeholder.com/200x280?text=No+Image&quot;">
         <div class="selected-anime-info">
-            <h3>{selected_row['title']}</h3>
+            <h3>{html.escape(selected_row['title'])}</h3>
             <div>{format_genres_as_tags(selected_row['genres'])}</div>
             <div class="score-text">Score: {selected_row['score']}</div>
             <div class="meta-info-main">Type: {selected_row.get('type', 'N/A')} | Year: {selected_row.get('year', 'N/A')} | Episodes: {selected_row.get('episodes', 'N/A')}</div>
